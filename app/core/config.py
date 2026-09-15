@@ -1,4 +1,3 @@
-```python
 from __future__ import annotations
 
 import os
@@ -315,4 +314,3 @@ class AppSettings:
             jwt_audience=jwt_audience,
             jwt_jwks_url=jwt_jwks_url,
         )
-```
