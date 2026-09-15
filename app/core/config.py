@@ -1,131 +1,318 @@
+```python
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
-import os
+from typing import Any
 
-from dotenv import load_dotenv
 import yaml
+from dotenv import load_dotenv
 
-load_dotenv()
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+load_dotenv(PROJECT_ROOT / ".env")
 
 
 class ConfigurationError(RuntimeError):
-    """Raised when YAML/environment configuration is missing or invalid."""
+    pass
 
 
-def _load_yaml(path: Path) -> dict:
-    if not path.exists():
-        raise ConfigurationError(f"Configuration file not found: {path}")
+def _load_yaml(path: str | Path) -> dict[str, Any]:
+    file_path = Path(path)
 
-    with path.open("r", encoding="utf-8") as handle:
-        data = yaml.safe_load(handle) or {}
+    if not file_path.is_absolute():
+        file_path = PROJECT_ROOT / file_path
+
+    if not file_path.exists():
+        raise ConfigurationError(
+            f"Configuration file not found: {file_path}"
+        )
+
+    try:
+        with file_path.open(
+            "r",
+            encoding="utf-8",
+        ) as file:
+            data = yaml.safe_load(file) or {}
+    except yaml.YAMLError as exc:
+        raise ConfigurationError(
+            f"Invalid YAML configuration: {file_path}"
+        ) from exc
 
     if not isinstance(data, dict):
-        raise ConfigurationError(f"YAML root must be an object: {path}")
+        raise ConfigurationError(
+            f"YAML root must be an object/map: {file_path}"
+        )
+
     return data
 
 
-def _env_optional(name: str | None) -> str | None:
-    if not name:
-        return None
-    value = os.getenv(name, "").strip()
-    return value or None
+def get_env(
+    name: str,
+    default: str | None = None,
+    required: bool = False,
+) -> str | None:
+    value = os.getenv(name, default)
+
+    if required and (
+        value is None
+        or str(value).strip() == ""
+    ):
+        raise ConfigurationError(
+            f"Missing required environment variable: {name}"
+        )
+
+    return value
 
 
-@dataclass(frozen=True)
+def get_env_bool(
+    name: str,
+    default: bool = False,
+) -> bool:
+    value = os.getenv(name)
+
+    if value is None:
+        return default
+
+    normalized = value.strip().lower()
+
+    return normalized in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def get_env_int(
+    name: str,
+    default: int,
+) -> int:
+    value = os.getenv(name)
+
+    if value is None or value.strip() == "":
+        return default
+
+    try:
+        return int(value)
+    except ValueError as exc:
+        raise ConfigurationError(
+            f"Environment variable {name} must be an integer"
+        ) from exc
+
+
+@dataclass(slots=True)
 class AppSettings:
-    app_name: str
+    name: str
     provider: str
     host: str
     port: int
     public_base_url: str
     log_level: str
-    admin_api_key: str | None
-    gateway_path: str
 
-    jwt_enabled: bool
-    jwt_issuer: str | None
-    jwt_audience: str | None
-    jwt_jwks_url: str | None
-    jwt_algorithms: list[str]
-    jwt_tenant_claim: str
+    gateway_path: str
+    authentication_mode: str
 
     clients_directory: Path
 
+    admin_api_key: str | None
+
+    jwt_issuer: str | None
+    jwt_audience: str | None
+    jwt_jwks_url: str | None
+
     @classmethod
-    def from_yaml(cls, path: str | Path = "config/app.yaml") -> "AppSettings":
-        path = Path(path)
-        data = _load_yaml(path)
+    def from_yaml(
+        cls,
+        path: str | Path = "config/app.yaml",
+    ) -> "AppSettings":
+        file_path = Path(path)
 
-        app = data.get("app") or {}
-        management = data.get("management_api") or {}
-        gateway = data.get("gateway") or {}
-        auth = gateway.get("authentication") or {}
-        jwt = auth.get("jwt") or {}
-        clients = data.get("clients") or {}
+        if not file_path.is_absolute():
+            file_path = PROJECT_ROOT / file_path
 
-        try:
-            port = int(app.get("port", 8000))
-        except (TypeError, ValueError) as exc:
-            raise ConfigurationError("app.port must be an integer.") from exc
+        data = _load_yaml(file_path)
 
-        if not 1 <= port <= 65535:
-            raise ConfigurationError("app.port must be between 1 and 65535.")
+        app = data.get("app", {})
+        gateway = data.get("gateway", {})
+        authentication = gateway.get(
+            "authentication",
+            {},
+        )
+        clients = data.get("clients", {})
 
-        gateway_path = str(gateway.get("public_path", "/mcp")).strip()
-        if not gateway_path.startswith("/"):
-            gateway_path = "/" + gateway_path
+        configured_dir = Path(
+            str(
+                clients.get(
+                    "directory",
+                    "config/clients",
+                )
+            )
+        )
 
-        mode = str(auth.get("mode", "opaque_token")).strip().lower()
-        if mode not in {"opaque_token", "jwt"}:
-            raise ConfigurationError(
-                "gateway.authentication.mode must be 'opaque_token' or 'jwt'."
+        if not configured_dir.is_absolute():
+            configured_dir = (
+                PROJECT_ROOT
+                / configured_dir
             )
 
-        jwt_enabled = mode == "jwt" or bool(jwt.get("enabled", False))
-        jwt_issuer = _env_optional(jwt.get("issuer_env"))
-        jwt_audience = _env_optional(jwt.get("audience_env"))
-        jwt_jwks_url = _env_optional(jwt.get("jwks_url_env"))
+        configured_dir = configured_dir.resolve()
 
-        if jwt_enabled:
+        app_name = str(
+            app.get(
+                "name",
+                "ZenBiz MCP Manager",
+            )
+        )
+
+        provider = str(
+            app.get(
+                "provider",
+                "Zen Business Solutions",
+            )
+        )
+
+        host = str(
+            os.getenv(
+                "HOST",
+                app.get(
+                    "host",
+                    "0.0.0.0",
+                ),
+            )
+        )
+
+        port_value = os.getenv(
+            "PORT",
+            str(
+                app.get(
+                    "port",
+                    8000,
+                )
+            ),
+        )
+
+        try:
+            port = int(port_value)
+        except (
+            TypeError,
+            ValueError,
+        ) as exc:
+            raise ConfigurationError(
+                "Application port must be an integer"
+            ) from exc
+
+        public_base_url = str(
+            os.getenv(
+                "PUBLIC_BASE_URL",
+                app.get(
+                    "public_base_url",
+                    "http://localhost:8000",
+                ),
+            )
+        ).rstrip("/")
+
+        log_level = str(
+            os.getenv(
+                "LOG_LEVEL",
+                app.get(
+                    "log_level",
+                    "INFO",
+                ),
+            )
+        ).upper()
+
+        gateway_path = str(
+            gateway.get(
+                "public_path",
+                "/mcp",
+            )
+        )
+
+        if not gateway_path.startswith("/"):
+            gateway_path = (
+                "/"
+                + gateway_path
+            )
+
+        authentication_mode = str(
+            authentication.get(
+                "mode",
+                "opaque_token",
+            )
+        ).strip().lower()
+
+        supported_auth_modes = {
+            "opaque_token",
+            "jwt",
+        }
+
+        if (
+            authentication_mode
+            not in supported_auth_modes
+        ):
+            raise ConfigurationError(
+                "Unsupported gateway authentication mode: "
+                f"{authentication_mode}"
+            )
+
+        admin_api_key = get_env(
+            "ADMIN_API_KEY"
+        )
+
+        jwt_issuer = get_env(
+            "GATEWAY_JWT_ISSUER"
+        )
+
+        jwt_audience = get_env(
+            "GATEWAY_JWT_AUDIENCE"
+        )
+
+        jwt_jwks_url = get_env(
+            "GATEWAY_JWT_JWKS_URL"
+        )
+
+        if authentication_mode == "jwt":
             missing = []
+
             if not jwt_issuer:
-                missing.append(str(jwt.get("issuer_env") or "JWT issuer"))
+                missing.append(
+                    "GATEWAY_JWT_ISSUER"
+                )
+
             if not jwt_audience:
-                missing.append(str(jwt.get("audience_env") or "JWT audience"))
+                missing.append(
+                    "GATEWAY_JWT_AUDIENCE"
+                )
+
             if not jwt_jwks_url:
-                missing.append(str(jwt.get("jwks_url_env") or "JWKS URL"))
+                missing.append(
+                    "GATEWAY_JWT_JWKS_URL"
+                )
+
             if missing:
                 raise ConfigurationError(
-                    "JWT authentication is enabled but missing environment values for: "
+                    "JWT authentication is enabled "
+                    "but the following environment "
+                    "variables are missing: "
                     + ", ".join(missing)
                 )
 
-        configured_dir = Path(str(clients.get("directory", "config/clients")))
-        if not configured_dir.is_absolute():
-            configured_dir = Path.cwd() / configured_dir
-
-        admin_api_key = None
-        if bool(management.get("enabled", True)):
-            admin_api_key = _env_optional(management.get("admin_api_key_env"))
-
         return cls(
-            app_name=str(app.get("name", "ZenBiz MCP Manager")).strip(),
-            provider=str(app.get("provider", "Zen Business Solutions")).strip(),
-            host=str(app.get("host", "0.0.0.0")).strip(),
+            name=app_name,
+            provider=provider,
+            host=host,
             port=port,
-            public_base_url=str(
-                app.get("public_base_url", "http://localhost:8000")
-            ).strip().rstrip("/"),
-            log_level=str(app.get("log_level", "INFO")).strip().upper(),
-            admin_api_key=admin_api_key,
+            public_base_url=public_base_url,
+            log_level=log_level,
             gateway_path=gateway_path,
-            jwt_enabled=jwt_enabled,
+            authentication_mode=authentication_mode,
+            clients_directory=configured_dir,
+            admin_api_key=admin_api_key,
             jwt_issuer=jwt_issuer,
             jwt_audience=jwt_audience,
             jwt_jwks_url=jwt_jwks_url,
-            jwt_algorithms=[str(x) for x in jwt.get("algorithms", ["RS256"])],
-            jwt_tenant_claim=str(jwt.get("tenant_claim", "tenant_id")).strip(),
-            clients_directory=configured_dir,
         )
+```
