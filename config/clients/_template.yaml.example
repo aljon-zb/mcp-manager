@@ -1,0 +1,30 @@
+# Copy this file to <client-id>.yaml and edit it.
+id: "new-client"
+name: "New Client"
+enabled: false
+integration: "odoo"
+
+ai_agents:
+  - "claude"
+  - "chatgpt"
+
+authentication:
+  access_token_envs:
+    - "NEW_CLIENT_MCP_ACCESS_TOKEN"
+
+# This selects a Python MCP factory registered in RuntimeManager.
+# A new business/platform MCP can have a different factory.
+runtime:
+  factory: "new-client"
+
+tools:
+  enabled:
+    - "connection"
+
+integration_config:
+  type: "odoo"
+  url_env: "NEW_CLIENT_ODOO_URL"
+  database_env: "NEW_CLIENT_ODOO_DATABASE"
+  api_key_env: "NEW_CLIENT_ODOO_API_KEY"
+  request_timeout_seconds: 30
+  max_results: 50

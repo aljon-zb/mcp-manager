@@ -1,0 +1,37 @@
+id: "peltierpro"
+name: "PeltierPro"
+enabled: true
+integration: "odoo"
+
+ai_agents:
+  - "claude"
+  - "chatgpt"
+  - "other-mcp-clients"
+
+authentication:
+  # The actual secret is NOT stored in YAML.
+  # The loader reads the value of this environment variable.
+  access_token_envs:
+    - "PELTIERPRO_MCP_ACCESS_TOKEN"
+
+runtime:
+  factory: "peltierpro"
+
+tools:
+  enabled:
+    - "connection"
+    - "users"
+    - "projects"
+    - "crm"
+    - "sales"
+    - "accounting"
+    - "inventory"
+    - "contacts"
+
+integration_config:
+  type: "odoo"
+  url_env: "PELTIERPRO_ODOO_URL"
+  database_env: "PELTIERPRO_ODOO_DATABASE"
+  api_key_env: "PELTIERPRO_ODOO_API_KEY"
+  request_timeout_seconds: 30
+  max_results: 50
